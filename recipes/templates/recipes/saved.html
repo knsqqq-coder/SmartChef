@@ -1,0 +1,76 @@
+{% load static %}
+<!doctype html>
+<html lang="{{ language }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SmartChef · {% if language == 'ru' %}Мои рецепты{% else %}Менің рецепттерім{% endif %}</title>
+  <link rel="stylesheet" href="{% static 'recipes/style.css' %}?v=6-cooking">
+</head>
+<body>
+  <main class="shell saved-shell">
+    <header class="topbar">
+      <a class="brand" href="/"><span class="brand-mark">S</span> SmartChef</a>
+      <nav class="top-actions">
+        <a class="saved-link" href="/">{% if language == 'ru' %}К выбору продуктов{% else %}Өнім таңдауға{% endif %}</a>
+        <div class="language-switch" aria-label="{% if language == 'ru' %}Язык интерфейса{% else %}Интерфейс тілі{% endif %}">
+          <a class="lang-button {% if language == 'kk' %}active{% endif %}" href="?language=kk">Қазақша</a>
+          <a class="lang-button {% if language == 'ru' %}active{% endif %}" href="?language=ru">Русский</a>
+        </div>
+      </nav>
+    </header>
+
+    <section class="intro compact-intro">
+      <p class="eyebrow">SmartChef</p>
+      <h1>{% if language == 'ru' %}Мои рецепты{% else %}Менің рецепттерім{% endif %}</h1>
+      <p class="lead">{% if language == 'ru' %}Сохранённые рецепты и их исходный текст.{% else %}Сақталған рецепттер мен бастапқы мәтіні.{% endif %}</p>
+    </section>
+
+    {% if saved_recipes %}
+      <section class="saved-list" aria-label="{% if language == 'ru' %}Сохранённые рецепты{% else %}Сақталған рецепттер{% endif %}">
+        {% for entry in saved_recipes %}
+          <article class="saved-card">
+            <div class="saved-meta">
+              <span>{% if language == 'ru' %}Продукты{% else %}Өнімдер{% endif %}</span>
+              <time>{{ entry.item.created_at|date:"d.m.Y H:i" }}</time>
+            </div>
+            {% if entry.recipe_payload %}
+              <h2>{{ entry.recipe_payload.title }}</h2>
+            {% else %}
+              <h2>{{ entry.item.products }}</h2>
+            {% endif %}
+            <p class="saved-products"><strong>{% if language == 'ru' %}Список{% else %}Өнімдер{% endif %}:</strong> {{ entry.item.products }}</p>
+            <div class="recipe-facts">
+              <span>{% if language == 'ru' %}Время{% else %}Уақыты{% endif %}: {{ entry.item.minutes }} {% if language == 'ru' %}мин{% else %}мин{% endif %}</span>
+              <span>{% if entry.item.language == 'ru' %}Русский{% else %}Қазақша{% endif %}</span>
+              {% if entry.item.vegetarian %}<span>{% if language == 'ru' %}Без мяса{% else %}Етсіз{% endif %}</span>{% endif %}
+            </div>
+            {% if entry.recipe_payload %}
+              <h3>{% if language == 'ru' %}Ингредиенты{% else %}Құрамы{% endif %}</h3>
+              <ul class="recipe-list">{% for ingredient in entry.recipe_payload.ingredients %}<li>{{ ingredient }}</li>{% endfor %}</ul>
+              <h3>{% if language == 'ru' %}Шаги{% else %}Қадамдар{% endif %}</h3>
+              <ol class="recipe-list">{% for recipe_step in entry.recipe_payload.steps %}<li>{{ recipe_step }}</li>{% endfor %}</ol>
+            {% elif entry.format_error %}
+              <p class="notice error" role="alert">{% if language == 'ru' %}Формат сохранённого рецепта повреждён.{% else %}Сақталған рецепт пішімі бүлінген.{% endif %}</p>
+              <div class="recipe-text">{{ entry.item.recipe }}</div>
+            {% else %}
+              <div class="recipe-text">{{ entry.item.recipe }}</div>
+            {% endif %}
+            <a class="secondary-button cook-link" href="{% url 'recipes:cooking' token=entry.item.token %}">
+              {% if language == 'ru' %}Открыть режим приготовления{% else %}Дайындау режимін ашу{% endif %}
+            </a>
+          </article>
+        {% endfor %}
+      </section>
+    {% else %}
+      <section class="empty-state saved-empty">
+        <h2>{% if language == 'ru' %}Пока нет сохранённых рецептов{% else %}Әзірге сақталған рецепт жоқ{% endif %}</h2>
+        <p>{% if language == 'ru' %}Создайте рецепт и нажмите «Сохранить».{% else %}Рецепт жасап, «Сақтау» батырмасын басыңыз.{% endif %}</p>
+        <a class="primary-link" href="/">{% if language == 'ru' %}Перейти к рецептам{% else %}Басты бетке қайту{% endif %}</a>
+      </section>
+    {% endif %}
+
+    <footer><span>SmartChef</span><span>{% if language == 'ru' %}Сохранённые блюда{% else %}Сақталған тағамдар{% endif %}</span></footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,95 @@
+{% load static %}
+<!doctype html>
+<html lang="{{ language }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SmartChef · {% if language == 'ru' %}Режим приготовления{% else %}Дайындау режимі{% endif %}</title>
+  <link rel="stylesheet" href="{% static 'recipes/style.css' %}?v=6-cooking">
+  <script src="{% static 'recipes/cooking.js' %}?v=6-cooking" defer></script>
+</head>
+<body>
+  <main class="shell cooking-shell">
+    <header class="topbar">
+      <a class="brand" href="/"><span class="brand-mark">S</span> SmartChef</a>
+      <nav class="top-actions">
+        <a class="saved-link" href="{% url 'recipes:saved_recipes' %}?language={{ language }}">{% if language == 'ru' %}Мои рецепты{% else %}Менің рецепттерім{% endif %}</a>
+        <div class="language-switch" aria-label="{% if language == 'ru' %}Язык интерфейса{% else %}Интерфейс тілі{% endif %}">
+          <a class="lang-button {% if language == 'kk' %}active{% endif %}" href="?language=kk">Қазақша</a>
+          <a class="lang-button {% if language == 'ru' %}active{% endif %}" href="?language=ru">Русский</a>
+        </div>
+      </nav>
+    </header>
+
+    {% if unavailable %}
+      <section class="intro compact-intro">
+        <p class="eyebrow">SmartChef</p>
+        <h1>{% if language == 'ru' %}Пошаговый режим недоступен{% else %}Қадамдық режим қолжетімсіз{% endif %}</h1>
+      </section>
+      <section class="notice error legacy-notice" role="alert">
+        <p>{% if language == 'ru' %}У этого рецепта нет проверенного списка ингредиентов и шагов. Исходный текст сохранён без изменений; новые шаги не создавались.{% else %}Бұл рецептте тексерілген өнімдер мен қадамдар жоқ. Бастапқы мәтін өзгеріссіз сақталды, жаңа қадам ойдан қосылған жоқ.{% endif %}</p>
+        <details>
+          <summary>{% if language == 'ru' %}Показать исходный текст{% else %}Бастапқы мәтінді көрсету{% endif %}</summary>
+          <div class="recipe-text">{{ legacy_text }}</div>
+        </details>
+      </section>
+      <a class="secondary-button return-link" href="{{ back_url }}">{% if language == 'ru' %}Вернуться к рецепту{% else %}Рецептке қайту{% endif %}</a>
+    {% else %}
+      <section class="intro compact-intro">
+        <p class="eyebrow">{% if language == 'ru' %}РЕЖИМ ПРИГОТОВЛЕНИЯ{% else %}ДАЙЫНДАУ РЕЖИМІ{% endif %}</p>
+        <h1>{{ recipe.title }}</h1>
+        <p class="lead">{% if language == 'ru' %}Выполняйте по одному шагу и отмечайте готовность.{% else %}Әр қадамды кезекпен орындап, дайын болғанын белгілеңіз.{% endif %}</p>
+      </section>
+
+      <section class="cooking-card" aria-live="polite">
+        <div class="cooking-progress">
+          <div class="progress-labels">
+            <span>{% if language == 'ru' %}Шаг{% else %}Қадам{% endif %} {{ step_number }} / {{ step_count }}</span>
+            <span>{% if language == 'ru' %}Выполнено{% else %}Орындалды{% endif %}: {{ completed_count }} / {{ step_count }}</span>
+          </div>
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="{{ step_count }}" aria-valuenow="{{ completed_count }}">
+            <span style="width: {{ progress_percent }}%"></span>
+          </div>
+        </div>
+
+        {% if finished %}
+          <div class="finished-state">
+            <div class="finish-mark" aria-hidden="true">✓</div>
+            <h2>{% if language == 'ru' %}Готово!{% else %}Дайын!{% endif %}</h2>
+            <p>{% if language == 'ru' %}Все шаги выполнены. Приятного аппетита!{% else %}Барлық қадам орындалды. Асыңыз дәмді болсын!{% endif %}</p>
+          </div>
+        {% else %}
+          <article class="step-card" tabindex="-1" id="current-step">
+            <p class="step-kicker">{% if language == 'ru' %}ТЕКУЩИЙ ШАГ{% else %}ҚАЗІРГІ ҚАДАМ{% endif %}</p>
+            <span class="step-number">{{ step_number }}</span>
+            <p class="step-text">{{ step }}</p>
+          </article>
+        {% endif %}
+
+        <form id="cooking-actions" class="cooking-actions" method="post">
+          {% csrf_token %}
+          <input type="hidden" name="language" value="{{ language }}">
+          {% if not finished %}
+            <input type="hidden" name="step" value="{{ step_index }}">
+            <button class="secondary-button" type="submit" name="action" value="back" {% if back_disabled %}disabled{% endif %}>
+              {% if language == 'ru' %}Назад{% else %}Артқа{% endif %}
+            </button>
+            <button class="primary-button confirm-button" type="submit" name="action" value="confirm" data-confirm-step="true">
+              {% if language == 'ru' %}Шаг выполнен{% else %}Қадам орындалды{% endif %}
+            </button>
+          {% else %}
+            <button class="primary-button" type="submit" name="action" value="restart">
+              {% if language == 'ru' %}Начать заново{% else %}Қайта бастау{% endif %}
+            </button>
+          {% endif %}
+          <button class="exit-button" type="submit" name="action" value="exit">
+            {% if language == 'ru' %}Выйти к рецепту{% else %}Рецептке қайту{% endif %}
+          </button>
+        </form>
+      </section>
+    {% endif %}
+
+    <footer><span>SmartChef</span><span>{% if language == 'ru' %}Шаг за шагом{% else %}Қадам-қадаммен{% endif %}</span></footer>
+  </main>
+</body>
+</html>
