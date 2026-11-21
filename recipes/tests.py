@@ -342,3 +342,210 @@ class CookingModeTests(TestCase):
             provider.assert_not_called()
         self.assertTrue(SavedRecipe.objects.filter(token=draft["token"]).exists())
         self.assertEqual(SavedRecipe.objects.count(), 1)
+
+
+class RecipeSuggestionTests(TestCase):
+    def setUp(self):
+        self.original_text = stored_recipe()
+        self.recipe = SavedRecipe.objects.create(
+            products="Жұмыртқа, Ірімшік",
+            recipe=self.original_text,
+            language="kk",
+            minutes=30,
+            vegetarian=False,
+        )
+        self.url = reverse("recipes:suggest_recipe", args=[self.recipe.token])
+        self.post_data = {
+            "language": "kk",
+            "change_request": "Сүт қоспа",
+        }
+
+    def post_live_response(self, response_text):
+        fake_client = MagicMock()
+        fake_client.__enter__.return_value.models.generate_content.return_value.text = response_text
+        with patch.dict(
+            os.environ,
+            {
+                "SMARTCHEF_DEMO": "0",
+                "GEMINI_API_KEY": "test-key-not-real",
+                "GEMINI_MODEL": "gemini-3.8-flash",
+            },
+        ), patch("recipes.views.genai.Client", return_value=fake_client):
+            response = self.client.post(self.url, self.post_data)
+        return response, fake_client
+
+    def test_invalid_json_or_schema_never_changes_saved_recipe(self):
+        invalid_responses = [
+            "",
+            "not json",
+            '{"title":"a","title":"b","ingredients":["x"],"steps":["y"]}',
+            json.dumps({**valid_payload(), "extra": True}),
+            json.dumps({**valid_payload(), "steps": []}),
+            json.dumps({**valid_payload(), "title": []}),
+        ]
+        for raw in invalid_responses:
+            with self.subTest(raw=raw):
+                self.post_live_response(raw)
+                self.recipe.refresh_from_db()
+                self.assertEqual(self.recipe.recipe, self.original_text)
+                pending = self.client.session["smartchef_recipe_editor"]
+                self.assertEqual(pending["recipe_id"], self.recipe.pk)
+                self.assertEqual(pending["original_text"], self.original_text)
+                self.assertEqual(pending["candidate"], "")
+                self.assertTrue(pending["pending_token"])
+                self.assertGreater(pending["expires_at"], 0)
+
+    def test_provider_error_and_timeout_leave_original_unchanged(self):
+        for failure in (RuntimeError("offline"), TimeoutError("request timed out")):
+            with self.subTest(failure=type(failure).__name__):
+                fake_client = MagicMock()
+                fake_client.__enter__.return_value.models.generate_content.side_effect = failure
+                with patch.dict(
+                    os.environ,
+                    {
+                        "SMARTCHEF_DEMO": "0",
+                        "GEMINI_API_KEY": "test-key-not-real",
+                        "GEMINI_MODEL": "gemini-3.8-flash",
+                    },
+                ), patch("recipes.views.genai.Client", return_value=fake_client):
+                    self.client.post(self.url, self.post_data)
+                self.recipe.refresh_from_db()
+                self.assertEqual(self.recipe.recipe, self.original_text)
+                state = self.client.session["smartchef_recipe_editor"]
+                self.assertEqual(state["candidate"], "")
+                self.assertEqual(state["error_code"], "timeout" if isinstance(failure, TimeoutError) else "provider")
+
+    def test_pending_proposal_is_server_session_data_then_accept_and_undo(self):
+        candidate = valid_payload(["Жұмыртқаны бөлек араластырыңыз."])
+        response, fake_client = self.post_live_response(json.dumps(candidate, ensure_ascii=False))
+        self.assertEqual(response.status_code, 302)
+        fake_client.__enter__.return_value.models.generate_content.assert_called_once()
+
+        self.recipe.refresh_from_db()
+        self.assertEqual(self.recipe.recipe, self.original_text)
+        pending = self.client.session["smartchef_recipe_editor"]
+        self.assertEqual(pending["recipe_id"], self.recipe.pk)
+        self.assertEqual(pending["original_text"], self.original_text)
+        self.assertEqual(decode_recipe(pending["candidate"]), candidate)
+        self.assertEqual(len(pending["pending_token"]), 36)
+
+        comparison = self.client.get(reverse("recipes:saved_recipes"))
+        self.assertContains(comparison, "ТҮПНҰСҚА")
+        self.assertContains(comparison, candidate["title"])
+        self.assertContains(comparison, "Қабылдау")
+        self.assertContains(comparison, "Бас тарту")
+
+        accepted = self.client.post(
+            reverse("recipes:accept_suggestion", args=[self.recipe.token]),
+            {"pending_token": pending["pending_token"], "language": "kk"},
+        )
+        self.assertEqual(accepted.status_code, 302)
+        self.recipe.refresh_from_db()
+        accepted_text = self.recipe.recipe
+        self.assertEqual(decode_recipe(accepted_text), candidate)
+        undo = self.client.session["smartchef_recipe_editor_undo"]
+        self.assertEqual(undo["original_text"], self.original_text)
+
+        # A repeated accept has no pending session token and cannot overwrite the row.
+        repeated = self.client.post(
+            reverse("recipes:accept_suggestion", args=[self.recipe.token]),
+            {"pending_token": pending["pending_token"], "language": "kk"},
+        )
+        self.assertEqual(repeated.status_code, 302)
+        self.recipe.refresh_from_db()
+        self.assertEqual(self.recipe.recipe, accepted_text)
+
+        undone = self.client.post(
+            reverse("recipes:undo_suggestion", args=[self.recipe.token]),
+            {"undo_token": undo["token"], "language": "kk"},
+        )
+        self.assertEqual(undone.status_code, 302)
+        self.recipe.refresh_from_db()
+        self.assertEqual(self.recipe.recipe, self.original_text)
+
+        # The snapshot is consumed: a second POST cannot apply it again.
+        second_undo = self.client.post(
+            reverse("recipes:undo_suggestion", args=[self.recipe.token]),
+            {"undo_token": undo["token"], "language": "kk"},
+        )
+        self.assertEqual(second_undo.status_code, 302)
+        self.recipe.refresh_from_db()
+        self.assertEqual(self.recipe.recipe, self.original_text)
+
+    def test_undo_does_not_overwrite_a_newer_recipe(self):
+        candidate = valid_payload(["Қабылданған қадам."])
+        self.post_live_response(json.dumps(candidate, ensure_ascii=False))
+        pending = self.client.session["smartchef_recipe_editor"]
+        self.client.post(
+            reverse("recipes:accept_suggestion", args=[self.recipe.token]),
+            {"pending_token": pending["pending_token"], "language": "kk"},
+        )
+        undo = self.client.session["smartchef_recipe_editor_undo"]
+
+        newer_text = stored_recipe(valid_payload(["Жаңарақ рецепт."]))
+        SavedRecipe.objects.filter(pk=self.recipe.pk).update(recipe=newer_text)
+        response = self.client.post(
+            reverse("recipes:undo_suggestion", args=[self.recipe.token]),
+            {"undo_token": undo["token"], "language": "kk"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.recipe.refresh_from_db()
+        self.assertEqual(self.recipe.recipe, newer_text)
+        self.assertNotIn("smartchef_recipe_editor_undo", self.client.session)
+
+    def test_stale_proposal_cannot_overwrite_recipe_changed_since_suggestion(self):
+        candidate = valid_payload(["Ескірген ұсыныстың қадамы."])
+        self.post_live_response(json.dumps(candidate, ensure_ascii=False))
+        pending = self.client.session["smartchef_recipe_editor"]
+
+        newer_text = stored_recipe(valid_payload(["Басқа жерде жаңартылды."]))
+        SavedRecipe.objects.filter(pk=self.recipe.pk).update(recipe=newer_text)
+        response = self.client.post(
+            reverse("recipes:accept_suggestion", args=[self.recipe.token]),
+            {"pending_token": pending["pending_token"], "language": "kk"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.recipe.refresh_from_db()
+        self.assertEqual(self.recipe.recipe, newer_text)
+
+    def test_reject_does_not_change_saved_recipe_and_demo_is_not_live(self):
+        demo_original = stored_recipe(
+            {
+                "title": "Пештегі көкөніс омлеті",
+                "ingredients": ["Жұмыртқа", "Ірімшік", "Сүт", "Аскөк"],
+                "steps": ["Қоспаны дайындаңыз.", "Пеште пісіріңіз."],
+            }
+        )
+        demo_recipe = SavedRecipe.objects.create(
+            products="Жұмыртқа, Ірімшік, Сүт, Аскөк",
+            recipe=demo_original,
+            language="kk",
+            minutes=30,
+            vegetarian=False,
+        )
+        demo_url = reverse("recipes:suggest_recipe", args=[demo_recipe.token])
+        demo_request = {
+            "language": "kk",
+            "change_request": "Пештің орнына табада дайындауға бейімде",
+        }
+        with patch.dict(os.environ, {"SMARTCHEF_DEMO": "1"}), patch(
+            "recipes.views.genai.Client"
+        ) as provider:
+            self.client.post(demo_url, demo_request)
+            provider.assert_not_called()
+        pending = self.client.session["smartchef_recipe_editor"]
+        self.assertTrue(pending["demo"])
+        comparison = self.client.get(reverse("recipes:saved_recipes"))
+        self.assertContains(comparison, "Демо, Gemini емес")
+        self.assertContains(comparison, "Табадағы көкөніс омлеті")
+        demo_recipe.refresh_from_db()
+        self.assertEqual(demo_recipe.recipe, demo_original)
+
+        response = self.client.post(
+            reverse("recipes:reject_suggestion", args=[demo_recipe.token]),
+            {"pending_token": pending["pending_token"], "language": "kk"},
+        )
+        self.assertEqual(response.status_code, 302)
+        demo_recipe.refresh_from_db()
+        self.assertEqual(demo_recipe.recipe, demo_original)
+        self.assertNotIn("smartchef_recipe_editor", self.client.session)

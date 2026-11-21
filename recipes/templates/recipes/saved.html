@@ -5,7 +5,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SmartChef · {% if language == 'ru' %}Мои рецепты{% else %}Менің рецепттерім{% endif %}</title>
-  <link rel="stylesheet" href="{% static 'recipes/style.css' %}?v=6-cooking">
+  <link rel="stylesheet" href="{% static 'recipes/style.css' %}?v=7-editor">
+  <script src="{% static 'recipes/saved-editor.js' %}?v=7-editor" defer></script>
 </head>
 <body>
   <main class="shell saved-shell">
@@ -29,7 +30,7 @@
     {% if saved_recipes %}
       <section class="saved-list" aria-label="{% if language == 'ru' %}Сохранённые рецепты{% else %}Сақталған рецепттер{% endif %}">
         {% for entry in saved_recipes %}
-          <article class="saved-card">
+          <article class="saved-card" id="recipe-{{ entry.item.token }}">
             <div class="saved-meta">
               <span>{% if language == 'ru' %}Продукты{% else %}Өнімдер{% endif %}</span>
               <time>{{ entry.item.created_at|date:"d.m.Y H:i" }}</time>
@@ -45,20 +46,120 @@
               <span>{% if entry.item.language == 'ru' %}Русский{% else %}Қазақша{% endif %}</span>
               {% if entry.item.vegetarian %}<span>{% if language == 'ru' %}Без мяса{% else %}Етсіз{% endif %}</span>{% endif %}
             </div>
-            {% if entry.recipe_payload %}
-              <h3>{% if language == 'ru' %}Ингредиенты{% else %}Құрамы{% endif %}</h3>
-              <ul class="recipe-list">{% for ingredient in entry.recipe_payload.ingredients %}<li>{{ ingredient }}</li>{% endfor %}</ul>
-              <h3>{% if language == 'ru' %}Шаги{% else %}Қадамдар{% endif %}</h3>
-              <ol class="recipe-list">{% for recipe_step in entry.recipe_payload.steps %}<li>{{ recipe_step }}</li>{% endfor %}</ol>
-            {% elif entry.format_error %}
-              <p class="notice error" role="alert">{% if language == 'ru' %}Формат сохранённого рецепта повреждён.{% else %}Сақталған рецепт пішімі бүлінген.{% endif %}</p>
-              <div class="recipe-text">{{ entry.item.recipe }}</div>
+            {% if entry.editor_suggestion %}
+              <p class="pending-note" role="status">
+                {% if language == 'ru' %}Предложение ещё не сохранено. Только «Принять» изменит рецепт. Срок действия — 10 минут.{% else %}Ұсыныс әлі сақталған жоқ. Тек «Қабылдау» рецептті өзгертеді. Ұсыныс 10 минут жарамды.{% endif %}
+              </p>
+              <div class="recipe-comparison" aria-label="{% if language == 'ru' %}Сравнение рецептов{% else %}Рецепттерді салыстыру{% endif %}">
+                <section class="comparison-panel">
+                  <p class="eyebrow">{% if language == 'ru' %}ИСХОДНАЯ ВЕРСИЯ{% else %}ТҮПНҰСҚА · №{{ entry.item.pk }}{% endif %}</p>
+                  {% if entry.recipe_payload %}
+                    <h3>{{ entry.recipe_payload.title }}</h3>
+                    <h4>{% if language == 'ru' %}Ингредиенты{% else %}Құрамы{% endif %}</h4>
+                    <ul class="recipe-list">{% for ingredient in entry.recipe_payload.ingredients %}<li>{{ ingredient }}</li>{% endfor %}</ul>
+                    <h4>{% if language == 'ru' %}Шаги{% else %}Дайындау{% endif %}</h4>
+                    <ol class="recipe-list">{% for recipe_step in entry.recipe_payload.steps %}<li>{{ recipe_step }}</li>{% endfor %}</ol>
+                  {% else %}
+                    <h3>{{ entry.item.products }}</h3>
+                    <div class="recipe-text">{{ entry.item.recipe }}</div>
+                  {% endif %}
+                </section>
+                <section class="comparison-panel comparison-candidate">
+                  <div class="recipe-title-row">
+                    <p class="eyebrow">{% if language == 'ru' %}ПРЕДЛОЖЕНИЕ{% else %}ҰСЫНЫС{% endif %}</p>
+                    {% if entry.editor_demo %}<span class="demo-badge">{% if language == 'ru' %}Демо, не Gemini{% else %}Демо, Gemini емес{% endif %}</span>{% endif %}
+                  </div>
+                  <h3>{{ entry.editor_suggestion.title }}</h3>
+                  <h4>{% if language == 'ru' %}Ингредиенты{% else %}Құрамы{% endif %}</h4>
+                  <ul class="recipe-list">{% for ingredient in entry.editor_suggestion.ingredients %}<li>{{ ingredient }}</li>{% endfor %}</ul>
+                  <h4>{% if language == 'ru' %}Шаги{% else %}Дайындау{% endif %}</h4>
+                  <ol class="recipe-list">{% for recipe_step in entry.editor_suggestion.steps %}<li>{{ recipe_step }}</li>{% endfor %}</ol>
+                  <p class="editor-hint">{% if language == 'ru' %}Исходная запись не менялась. Применение произойдёт только после подтверждения.{% else %}Түпнұсқа өзгерген жоқ. Өзгеріс тек қабылдағаннан кейін қолданылады.{% endif %}</p>
+                  <div class="editor-actions">
+                    <form method="post" action="{% url 'recipes:accept_suggestion' token=entry.item.token %}">
+                      {% csrf_token %}<input type="hidden" name="language" value="{{ language }}"><input type="hidden" name="pending_token" value="{{ entry.pending_token }}">
+                      <button class="primary-button" type="submit">{% if language == 'ru' %}Принять{% else %}Қабылдау{% endif %}</button>
+                    </form>
+                    <form method="post" action="{% url 'recipes:reject_suggestion' token=entry.item.token %}">
+                      {% csrf_token %}<input type="hidden" name="language" value="{{ language }}"><input type="hidden" name="pending_token" value="{{ entry.pending_token }}">
+                      <button class="secondary-button" type="submit">{% if language == 'ru' %}Отклонить{% else %}Бас тарту{% endif %}</button>
+                    </form>
+                  </div>
+                </section>
+              </div>
             {% else %}
-              <div class="recipe-text">{{ entry.item.recipe }}</div>
+              {% if entry.recipe_payload %}
+                <h3>{% if language == 'ru' %}Ингредиенты{% else %}Құрамы{% endif %}</h3>
+                <ul class="recipe-list">{% for ingredient in entry.recipe_payload.ingredients %}<li>{{ ingredient }}</li>{% endfor %}</ul>
+                <h3>{% if language == 'ru' %}Шаги{% else %}Қадамдар{% endif %}</h3>
+                <ol class="recipe-list">{% for recipe_step in entry.recipe_payload.steps %}<li>{{ recipe_step }}</li>{% endfor %}</ol>
+              {% elif entry.format_error %}
+                <p class="notice error" role="alert">{% if language == 'ru' %}Формат сохранённого рецепта повреждён.{% else %}Сақталған рецепт пішімі бүлінген.{% endif %}</p>
+                <div class="recipe-text">{{ entry.item.recipe }}</div>
+              {% else %}
+                <div class="recipe-text">{{ entry.item.recipe }}</div>
+              {% endif %}
+            {% endif %}
+
+            {% if entry.editor_notice %}
+              <p class="notice {% if entry.editor_notice == 'accepted' or entry.editor_notice == 'undone' %}success{% else %}error{% endif %} editor-message" role="status">
+                {% if entry.editor_notice == 'accepted' %}{% if language == 'ru' %}Предложение принято. Предыдущую версию можно отменить одной кнопкой.{% else %}Ұсыныс қабылданды. Алдыңғы нұсқаны бір батырмамен қайтаруға болады.{% endif %}
+                {% elif entry.editor_notice == 'rejected' %}{% if language == 'ru' %}Предложение отклонено. Исходная запись не изменилась.{% else %}Ұсыныс қабылданбады. Түпнұсқа өзгерген жоқ.{% endif %}
+                {% elif entry.editor_notice == 'undone' %}{% if language == 'ru' %}Предыдущее состояние рецепта восстановлено.{% else %}Рецепттің алдыңғы күйі қайтарылды.{% endif %}
+                {% elif entry.editor_notice == 'invalid_suggestion' %}{% if language == 'ru' %}Предложение не прошло проверку. Рецепт не изменён.{% else %}Ұсыныс тексеруден өтпеді. Рецепт өзгерген жоқ.{% endif %}
+                {% else %}{% if language == 'ru' %}Предложение устарело. Получите его заново.{% else %}Ұсыныстың мерзімі өтті не рецепт өзгерген. Қайта сұратыңыз.{% endif %}{% endif %}
+              </p>
+            {% endif %}
+
+            {% if entry.can_undo %}
+              <form method="post" action="{% url 'recipes:undo_suggestion' token=entry.item.token %}" class="undo-form">
+                {% csrf_token %}<input type="hidden" name="language" value="{{ language }}"><input type="hidden" name="undo_token" value="{{ entry.undo_token }}">
+                <button class="secondary-button" type="submit">{% if language == 'ru' %}Отменить принятое изменение{% else %}Қабылданған өзгерісті болдырмау{% endif %}</button>
+              </form>
             {% endif %}
             <a class="secondary-button cook-link" href="{% url 'recipes:cooking' token=entry.item.token %}">
               {% if language == 'ru' %}Открыть режим приготовления{% else %}Дайындау режимін ашу{% endif %}
             </a>
+
+            <section class="recipe-editor" aria-labelledby="editor-title-{{ entry.item.token }}">
+              <h3 id="editor-title-{{ entry.item.token }}">{% if language == 'ru' %}Предложение изменения{% else %}Өзгерту ұсынысы{% endif %}</h3>
+              <form method="post" action="{% url 'recipes:suggest_recipe' token=entry.item.token %}" class="recipe-editor-form" data-recipe-editor>
+                {% csrf_token %}
+                <input type="hidden" name="language" value="{{ language }}">
+                <label class="editor-label" for="change-request-{{ entry.item.token }}">
+                  {% if language == 'ru' %}Что изменить в рецепте?{% else %}Рецептке қандай өзгеріс керек?{% endif %}
+                </label>
+                <textarea id="change-request-{{ entry.item.token }}" name="change_request" minlength="3" maxlength="300" required aria-describedby="editor-hint-{{ entry.item.token }} editor-wait-{{ entry.item.token }}">{{ entry.editor_request }}</textarea>
+                <p class="editor-hint" id="editor-hint-{{ entry.item.token }}">{% if language == 'ru' %}От 3 до 300 символов. Предложение не меняет сохранённый рецепт.{% else %}3–300 таңба. Ұсыныс сақталған рецептті өзгертпейді.{% endif %}</p>
+                <button class="primary-button editor-submit" type="submit" data-editor-submit data-label="{% if language == 'ru' %}Получить предложение{% else %}Ұсыныс алу{% endif %}" data-wait-label="{% if language == 'ru' %}Готовим предложение…{% else %}Ұсыныс дайындалып жатыр…{% endif %}">{% if language == 'ru' %}Получить предложение{% else %}Ұсыныс алу{% endif %}</button>
+                <p class="editor-wait" id="editor-wait-{{ entry.item.token }}" data-editor-wait aria-live="polite" hidden>{% if language == 'ru' %}Ожидаем ответ. Сохранённый рецепт останется без изменений.{% else %}Жауап күтілуде. Сақталған рецепт өзгеріссіз қалады.{% endif %}</p>
+              </form>
+
+              {% if entry.editor_error_code %}
+                <p class="notice error editor-message" role="alert">
+                  {% if entry.editor_error_code == 'prompt_length' %}
+                    {% if language == 'ru' %}Запрос должен содержать от 3 до 300 символов.{% else %}Сұрау 3–300 таңбадан тұруы керек.{% endif %}
+                  {% elif entry.editor_error_code == 'api_key' %}
+                    {% if language == 'ru' %}Проверьте GEMINI_API_KEY в .env.{% else %}.env ішіндегі GEMINI_API_KEY мәнін тексеріңіз.{% endif %}
+                  {% elif entry.editor_error_code == 'rate_limit' %}
+                    {% if language == 'ru' %}Лимит Gemini исчерпан. Попробуйте позже.{% else %}Gemini сұрау лимиті таусылды. Кейінірек қайталап көріңіз.{% endif %}
+                  {% elif entry.editor_error_code == 'invalid_source' %}
+                    {% if language == 'ru' %}Не удалось прочитать исходный формат рецепта.{% else %}Бастапқы рецепт пішімін оқу мүмкін болмады.{% endif %}
+                  {% elif entry.editor_error_code == 'source_too_long' %}
+                    {% if language == 'ru' %}Исходный рецепт слишком длинный для запроса.{% else %}Бастапқы рецепт сұрау үшін тым ұзын.{% endif %}
+                  {% elif entry.editor_error_code == 'timeout' %}
+                    {% if language == 'ru' %}Превышено время ожидания ответа. Попробуйте ещё раз позже.{% else %}Жауапты күту уақыты аяқталды. Кейінірек қайталап көріңіз.{% endif %}
+                  {% elif entry.editor_error_code == 'empty_response' %}
+                    {% if language == 'ru' %}Gemini вернул пустой ответ. Сохранённый рецепт не изменён.{% else %}Gemini бос жауап қайтарды. Сақталған рецепт өзгерген жоқ.{% endif %}
+                  {% elif entry.editor_error_code == 'invalid_suggestion' %}
+                    {% if language == 'ru' %}Ответ не прошёл проверку JSON и не показан как HTML.{% else %}Жауап JSON тексеруінен өтпеді, HTML ретінде көрсетілмеді.{% endif %}
+                  {% else %}
+                    {% if language == 'ru' %}Не удалось получить предложение. Проверьте подключение и настройки Gemini.{% else %}Ұсыныс алынбады. Интернет пен Gemini баптауын тексеріңіз.{% endif %}
+                  {% endif %}
+                </p>
+              {% endif %}
+
+            </section>
           </article>
         {% endfor %}
       </section>
